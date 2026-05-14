@@ -58,6 +58,25 @@ type AiAnalysisResponse = {
   summary: string
 }
 
+type CryptoNewsItem = {
+  title: string
+  source: string
+  link: string
+  publishedAt: string
+}
+
+type AiAnalysisHistoryItem = {
+  recommendation: string
+  summary: string
+  createdAt: string
+}
+
+type SignalChangeResponse = {
+  previous: string
+  current: string
+  changed: boolean
+}
+
 type MarketChartResponse = {
   symbol: string
   days: number
@@ -102,6 +121,9 @@ type CryptoDashboardResponse = {
   risk: RiskResponse
   analysis: AiAnalysisResponse
   chart: MarketChartResponse
+  news: CryptoNewsItem[]
+  history: AiAnalysisHistoryItem[]
+  signalChange: SignalChangeResponse
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
@@ -115,6 +137,13 @@ function App() {
   const [risk, setRisk] = useState<RiskResponse | null>(null)
   const [analysis, setAnalysis] = useState<AiAnalysisResponse | null>(null)
   const [chart, setChart] = useState<MarketChartResponse | null>(null)
+  const [news, setNews] = useState<CryptoNewsItem[]>([])
+  const [history, setHistory] = useState<AiAnalysisHistoryItem[]>([])
+  const [signalChange, setSignalChange] = useState<SignalChangeResponse | null>(null)
+  const [watchlist, setWatchlist] = useState<string[]>(() => {
+    const saved = window.localStorage.getItem('finyorum-watchlist')
+    return saved ? JSON.parse(saved) : ['BTC', 'ETH', 'AVAX']
+  })
   const [suggestions, setSuggestions] = useState<CryptoSearchResult[]>([])
   const [searchFocused, setSearchFocused] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -146,7 +175,11 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [symbol, searchFocused, loading])
 
-  async function loadDashboard(nextSymbol: string) {
+  useEffect(() => {
+    window.localStorage.setItem('finyorum-watchlist', JSON.stringify(watchlist))
+  }, [watchlist])
+
+  async function loadDashboard(nextSymbol: string, refresh = false) {
     const normalized = nextSymbol.trim().toUpperCase()
     if (!normalized) {
       return
@@ -157,7 +190,7 @@ function App() {
     setSuggestions([])
 
     try {
-      const dashboardResponse = await fetch(`${apiBaseUrl}/api/crypto/${normalized}/dashboard?days=30`)
+      const dashboardResponse = await fetch(`${apiBaseUrl}/api/crypto/${normalized}/dashboard?days=30&refresh=${refresh}`)
 
       if (!dashboardResponse.ok) {
         throw new Error('API response failed')
@@ -169,12 +202,18 @@ function App() {
       setRisk(dashboard.risk)
       setAnalysis(dashboard.analysis)
       setChart(dashboard.chart)
+      setNews(dashboard.news ?? [])
+      setHistory(dashboard.history ?? [])
+      setSignalChange(dashboard.signalChange ?? null)
     } catch {
       setQuote(null)
       setMarket(null)
       setRisk(null)
       setAnalysis(null)
       setChart(null)
+      setNews([])
+      setHistory([])
+      setSignalChange(null)
       setError('Bu varlik icin CoinGecko verisi alinamadi. Sembol yerine coin adini deneyebilirsin.')
     } finally {
       setLoading(false)
@@ -225,6 +264,51 @@ function App() {
   const formatNumber = (value?: number | null) =>
     value && value > 0 ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value) : '-'
 
+  const formatPercent = (value?: number | null) =>
+    value && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-'
+
+  const ratio = (numerator?: number | null, denominator?: number | null) =>
+    numerator && denominator && denominator > 0 ? numerator / denominator : 0
+
+  const tokenomics = {
+    circulatingToMax: ratio(market?.circulatingSupply, market?.maxSupply) * 100,
+    totalToMax: ratio(market?.totalSupply, market?.maxSupply) * 100,
+    fdvToMarketCap: ratio(market?.fullyDilutedValuation, market?.marketCap),
+    volumeToMarketCap: ratio(market?.totalVolume, market?.marketCap) * 100,
+  }
+
+  const supplyPressure = tokenomics.fdvToMarketCap >= 2 && tokenomics.circulatingToMax < 60
+    ? 'Yuksek'
+    : tokenomics.totalToMax > tokenomics.circulatingToMax + 15
+      ? 'Orta'
+      : tokenomics.circulatingToMax >= 85 && tokenomics.fdvToMarketCap <= 1.2
+        ? 'Dusuk'
+        : 'Karisik'
+
+  const analysisSections = useMemo(() => {
+    const sentences = analysisText
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean)
+    const labels = ['Tokenomics', 'Likidite', 'Haber', 'Risk', 'Sonuc']
+    return labels.map((label, index) => ({
+      label,
+      text: sentences[index] ?? '-',
+    }))
+  }, [analysisText])
+
+  function toggleWatchlist(asset: string) {
+    const normalized = asset.trim().toUpperCase()
+    if (!normalized) {
+      return
+    }
+    setWatchlist((items) =>
+      items.includes(normalized)
+        ? items.filter((item) => item !== normalized)
+        : [...items, normalized]
+    )
+  }
+
   return (
     <main className="dashboard">
       <header className="topbar">
@@ -271,8 +355,36 @@ function App() {
           <button type="submit" disabled={loading}>
             Analiz et
           </button>
+          <button type="button" disabled={loading} onClick={() => void loadDashboard(activeSymbol, true)}>
+            Yenile
+          </button>
+          <button type="button" onClick={() => toggleWatchlist(activeSymbol)}>
+            {watchlist.includes(activeSymbol.toUpperCase()) ? 'Izleniyor' : 'Izle'}
+          </button>
         </form>
       </header>
+
+      <section className="watchlist" aria-label="Izleme listesi">
+        <div>
+          <span>Watchlist</span>
+          <strong>{watchlist.length}</strong>
+        </div>
+        <nav>
+          {watchlist.map((asset) => (
+            <button
+              key={asset}
+              type="button"
+              className={asset === activeSymbol.toUpperCase() ? 'active' : ''}
+              onClick={() => {
+                setSymbol(asset)
+                setActiveSymbol(asset)
+              }}
+            >
+              {asset}
+            </button>
+          ))}
+        </nav>
+      </section>
 
       <div className="quick-assets" aria-label="Hizli kripto secimi">
         {quickAssets.map((asset) => (
@@ -316,7 +428,11 @@ function App() {
         <article className="metric">
           <span>Sinyal</span>
           <strong>{analysis?.recommendation ?? '-'}</strong>
-          <small>{quote?.source ? `Kaynak: ${quote.source}` : 'Hazirlaniyor'}</small>
+          <small>
+            {signalChange?.changed
+              ? `${signalChange.previous} -> ${signalChange.current}`
+              : quote?.source ? `Kaynak: ${quote.source}` : 'Hazirlaniyor'}
+          </small>
         </article>
       </section>
 
@@ -397,6 +513,50 @@ function App() {
         </aside>
       </section>
 
+      <section className="analysis-breakdown">
+        {analysisSections.map((section) => (
+          <article className="panel detail-panel" key={section.label}>
+            <span>{section.label}</span>
+            <p>{section.text}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="insight-grid">
+        <article className="panel tokenomics-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Tokenomics</h2>
+              <p>Arz ve satis baskisi</p>
+            </div>
+            <span>{supplyPressure}</span>
+          </div>
+          <div className="market-grid compact-grid">
+            <div><span>Dolasim / max</span><strong>{formatPercent(tokenomics.circulatingToMax)}</strong></div>
+            <div><span>Toplam / max</span><strong>{formatPercent(tokenomics.totalToMax)}</strong></div>
+            <div><span>FDV / market cap</span><strong>{tokenomics.fdvToMarketCap ? `${tokenomics.fdvToMarketCap.toFixed(2)}x` : '-'}</strong></div>
+            <div><span>Hacim / market cap</span><strong>{formatPercent(tokenomics.volumeToMarketCap)}</strong></div>
+          </div>
+        </article>
+
+        <article className="panel news-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Haberler</h2>
+              <p>AI yorumunda kullanilan basliklar</p>
+            </div>
+          </div>
+          <div className="news-list">
+            {news.length > 0 ? news.map((item) => (
+              <a href={item.link} target="_blank" rel="noreferrer" key={`${item.title}-${item.publishedAt}`}>
+                <strong>{item.title}</strong>
+                <span>{item.source} · {new Intl.DateTimeFormat('tr-TR', { day: '2-digit', month: 'short' }).format(new Date(item.publishedAt))}</span>
+              </a>
+            )) : <p>Guncel haber basligi bulunamadi.</p>}
+          </div>
+        </article>
+      </section>
+
       <section className="panel market-panel">
         <div className="panel-header">
           <div>
@@ -413,6 +573,24 @@ function App() {
           <div><span>Dolasim arzi</span><strong>{formatNumber(market?.circulatingSupply)}</strong></div>
           <div><span>Toplam arz</span><strong>{formatNumber(market?.totalSupply)}</strong></div>
           <div><span>Maksimum arz</span><strong>{formatNumber(market?.maxSupply)}</strong></div>
+        </div>
+      </section>
+
+      <section className="panel history-panel">
+        <div className="panel-header">
+          <div>
+            <h2>Analiz gecmisi</h2>
+            <p>Son kaydedilen AI sinyalleri</p>
+          </div>
+        </div>
+        <div className="history-list">
+          {history.length > 0 ? history.slice(0, 6).map((item) => (
+            <article key={`${item.createdAt}-${item.recommendation}`}>
+              <strong>{item.recommendation}</strong>
+              <p>{item.summary}</p>
+              <span>{new Intl.DateTimeFormat('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(item.createdAt))}</span>
+            </article>
+          )) : <p>Henuz analiz gecmisi yok.</p>}
         </div>
       </section>
     </main>

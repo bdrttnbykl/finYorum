@@ -5,6 +5,9 @@ public record CryptoDashboardResponse(
         CryptoMarketStats market,
         RiskResponse risk,
         AiAnalysisResponse analysis,
-        MarketChartResponse chart
+        MarketChartResponse chart,
+        java.util.List<CryptoNewsItem> news,
+        java.util.List<AiAnalysisHistoryItem> history,
+        SignalChangeResponse signalChange
 ) {
 }

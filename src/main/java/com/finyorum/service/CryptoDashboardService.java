@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finyorum.domain.CryptoMarketSnapshot;
 import com.finyorum.dto.AiAnalysisResponse;
+import com.finyorum.dto.AiAnalysisHistoryItem;
 import com.finyorum.dto.CryptoDashboardResponse;
 import com.finyorum.dto.CryptoMarketStats;
 import com.finyorum.dto.CryptoNewsItem;
@@ -12,6 +13,8 @@ import com.finyorum.dto.MarketChartPoint;
 import com.finyorum.dto.MarketChartResponse;
 import com.finyorum.dto.QuoteResponse;
 import com.finyorum.dto.RiskResponse;
+import com.finyorum.dto.SignalChangeResponse;
+import com.finyorum.repository.AiAnalysisRepository;
 import com.finyorum.repository.CryptoMarketSnapshotRepository;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +36,7 @@ public class CryptoDashboardService {
     private final RiskService riskService;
     private final AiAnalysisService aiAnalysisService;
     private final CryptoNewsService cryptoNewsService;
+    private final AiAnalysisRepository analyses;
     private final CryptoMarketSnapshotRepository snapshots;
     private final ObjectMapper objectMapper;
 
@@ -40,21 +44,27 @@ public class CryptoDashboardService {
                                   RiskService riskService,
                                   AiAnalysisService aiAnalysisService,
                                   CryptoNewsService cryptoNewsService,
+                                  AiAnalysisRepository analyses,
                                   CryptoMarketSnapshotRepository snapshots,
                                   ObjectMapper objectMapper) {
         this.cryptoService = cryptoService;
         this.riskService = riskService;
         this.aiAnalysisService = aiAnalysisService;
         this.cryptoNewsService = cryptoNewsService;
+        this.analyses = analyses;
         this.snapshots = snapshots;
         this.objectMapper = objectMapper;
     }
 
     public synchronized CryptoDashboardResponse dashboard(String asset, int days) {
+        return dashboard(asset, days, false);
+    }
+
+    public synchronized CryptoDashboardResponse dashboard(String asset, int days, boolean refresh) {
         String symbol = normalize(asset);
         int normalizedDays = Math.max(1, Math.min(days, 90));
 
-        return snapshots.findTopBySymbolOrderByFetchedAtDesc(symbol)
+        return refresh ? createSnapshotDashboard(asset, normalizedDays) : snapshots.findTopBySymbolOrderByFetchedAtDesc(symbol)
                 .filter(this::isFresh)
                 .map(snapshot -> fromSnapshot(snapshot, normalizedDays))
                 .orElseGet(() -> createSnapshotDashboard(asset, normalizedDays));
@@ -83,7 +93,7 @@ public class CryptoDashboardService {
         CryptoMarketSnapshot snapshot = snapshots.save(toSnapshot(market, chart, risk));
         List<CryptoNewsItem> news = cryptoNewsService.recentNews(market);
         AiAnalysisResponse analysis = aiAnalysisService.analyzeForSnapshot(snapshot.getId(), quote, market, risk, chart, news);
-        return new CryptoDashboardResponse(quote, market, risk, analysis, chart);
+        return new CryptoDashboardResponse(quote, market, risk, analysis, chart, news, history(market.symbol()), signalChange(market.symbol(), analysis));
     }
 
     private CryptoDashboardResponse fromSnapshot(CryptoMarketSnapshot snapshot, int days) {
@@ -124,7 +134,7 @@ public class CryptoDashboardService {
         MarketChartResponse chart = new MarketChartResponse(snapshot.getSymbol(), days, "database-cache", points);
         List<CryptoNewsItem> news = cryptoNewsService.recentNews(market);
         AiAnalysisResponse analysis = aiAnalysisService.analyzeForSnapshot(snapshot.getId(), quote, market, risk, chart, news);
-        return new CryptoDashboardResponse(quote, market, risk, analysis, chart);
+        return new CryptoDashboardResponse(quote, market, risk, analysis, chart, news, history(snapshot.getSymbol()), signalChange(snapshot.getSymbol(), analysis));
     }
 
     private CryptoMarketSnapshot toSnapshot(CryptoMarketStats market,
@@ -176,5 +186,24 @@ public class CryptoDashboardService {
 
     private String normalize(String asset) {
         return asset.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private List<AiAnalysisHistoryItem> history(String symbol) {
+        return analyses.findTop10BySymbolOrderByCreatedAtDesc(symbol).stream()
+                .map(analysis -> new AiAnalysisHistoryItem(
+                        analysis.getRecommendation(),
+                        analysis.getSummary(),
+                        analysis.getCreatedAt()))
+                .toList();
+    }
+
+    private SignalChangeResponse signalChange(String symbol, AiAnalysisResponse current) {
+        List<AiAnalysisHistoryItem> items = history(symbol);
+        String previous = items.stream()
+                .filter(item -> !item.recommendation().equalsIgnoreCase(current.recommendation()))
+                .map(AiAnalysisHistoryItem::recommendation)
+                .findFirst()
+                .orElse(current.recommendation());
+        return new SignalChangeResponse(previous, current.recommendation(), !previous.equalsIgnoreCase(current.recommendation()));
     }
 }

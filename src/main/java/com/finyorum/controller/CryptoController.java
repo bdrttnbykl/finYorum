@@ -46,8 +46,9 @@ public class CryptoController {
 
     @GetMapping("/{asset}/dashboard")
     CryptoDashboardResponse dashboard(@PathVariable String asset,
-                                      @RequestParam(defaultValue = "30") int days) {
-        return cryptoDashboardService.dashboard(asset, days);
+                                      @RequestParam(defaultValue = "30") int days,
+                                      @RequestParam(defaultValue = "false") boolean refresh) {
+        return cryptoDashboardService.dashboard(asset, days, refresh);
     }
 
     @GetMapping("/{asset}/market-chart")
