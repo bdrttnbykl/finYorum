@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: finyorum-postgres
+    environment:
+      POSTGRES_DB: finyorum
+      POSTGRES_USER: finyorum
+      POSTGRES_PASSWORD: finyorum
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:

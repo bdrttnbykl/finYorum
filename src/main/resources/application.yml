@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: finyorum
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://127.0.0.1:5433/finyorum}
+    username: ${DATABASE_USERNAME:finyorum}
+    password: ${DATABASE_PASSWORD:finyorum}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+integrations:
+  ai:
+    provider: ${AI_PROVIDER:openai}
+  finnhub:
+    api-key: ${FINNHUB_API_KEY:}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-5.2}
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
+
+server:
+  port: 8080
